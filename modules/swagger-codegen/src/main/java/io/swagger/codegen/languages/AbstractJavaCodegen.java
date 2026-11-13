@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
@@ -57,16 +58,20 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
     public static final String DEFAULT_LIBRARY = "<default>";
     public static final String DATE_LIBRARY = "dateLibrary";
     public static final String JAVA8_MODE = "java8";
+    public static final String JAVA11_MODE = "java11";
     public static final String SUPPORT_ASYNC = "supportAsync";
     public static final String WITH_XML = "withXml";
     public static final String SUPPORT_JAVA6 = "supportJava6";
     public static final String DISABLE_HTML_ESCAPING = "disableHtmlEscaping";
     public static final String ERROR_ON_UNKNOWN_ENUM = "errorOnUnknownEnum";
     public static final String CHECK_DUPLICATED_MODEL_NAME = "checkDuplicatedModelName";
+    public static final String ADDITIONAL_MODEL_TYPE_ANNOTATIONS = "additionalModelTypeAnnotations";
+    public static final String JAKARTA = "jakarta";
 
     protected String dateLibrary = "threetenbp";
     protected boolean supportAsync = false;
     protected boolean java8Mode = false;
+    protected boolean java11Mode = false;
     protected boolean withXml = false;
     protected String invokerPackage = "io.swagger";
     protected String groupId = "io.swagger";
@@ -96,8 +101,10 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
     protected String modelDocPath = "docs/";
     protected boolean supportJava6= false;
     protected boolean disableHtmlEscaping = false;
+    protected boolean jakarta = false;
     private NotNullAnnotationFeatures notNullOption;
     private IgnoreUnknownJacksonFeatures ignoreUnknown;
+    protected List<String> additionalModelTypeAnnotations = new LinkedList<>();
 
     public AbstractJavaCodegen() {
         super();
@@ -181,11 +188,12 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
         CliOption dateLibrary = new CliOption(DATE_LIBRARY, "Option. Date library to use");
         Map<String, String> dateOptions = new HashMap<String, String>();
         dateOptions.put("java8", "Java 8 native JSR310 (preferred for jdk 1.8+) - note: this also sets \"" + JAVA8_MODE + "\" to true");
+        dateOptions.put("java11", "Java 11 native JSR384 (preferred for jdk 11+) - note: this also sets \"" + JAVA11_MODE + "\" to true");
         dateOptions.put("threetenbp", "Backport of JSR310 (preferred for jdk < 1.8)");
         dateOptions.put("java8-localdatetime", "Java 8 using LocalDateTime (for legacy app only)");
         dateOptions.put("java8-instant", "Java 8 using Instant");
         dateOptions.put("joda", "Joda (for legacy app only)");
-        dateOptions.put("legacy", "Legacy java.util.Date (if you really have a good reason not to use threetenbp");
+        dateOptions.put("legacy", "Legacy java.util.Date (if you really have a good reason not to use threetenbp)");
         dateLibrary.setEnum(dateOptions);
         cliOptions.add(dateLibrary);
 
@@ -196,8 +204,23 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
         java8Mode.setEnum(java8ModeOptions);
         cliOptions.add(java8Mode);
 
+        CliOption java11Mode = new CliOption(JAVA11_MODE, "Option. Use Java11 classes instead of third party equivalents");
+        Map<String, String> java11ModeOptions = new HashMap<String, String>();
+        java11ModeOptions.put("true", "Use Java 11 classes");
+        java11ModeOptions.put("false", "Various third party libraries as needed");
+        java11Mode.setEnum(java11ModeOptions);
+        cliOptions.add(java11Mode);
+
         cliOptions.add(CliOption.newBoolean(DISABLE_HTML_ESCAPING, "Disable HTML escaping of JSON strings when using gson (needed to avoid problems with byte[] fields)"));
         cliOptions.add(CliOption.newBoolean(CHECK_DUPLICATED_MODEL_NAME, "Check if there are duplicated model names (ignoring case)"));
+        cliOptions.add(CliOption.newString(ADDITIONAL_MODEL_TYPE_ANNOTATIONS, "Additional annotations for model type(class level annotations)"));
+
+        CliOption jeeSpec = CliOption.newBoolean(JAKARTA, "Use Jakarta EE (package jakarta.*) instead of Java EE (javax.*)");
+        Map<String, String> jeeSpecModeOptions = new HashMap<String, String>();
+        jeeSpecModeOptions.put("true", "Use Jakarta EE (package jakarta.*)");
+        jeeSpecModeOptions.put("false", "Use Java EE (javax.*)");
+        jeeSpec.setEnum(jeeSpecModeOptions);
+        cliOptions.add(jeeSpec);
     }
 
     @Override
@@ -213,6 +236,11 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
             this.setDisableHtmlEscaping(Boolean.valueOf(additionalProperties.get(DISABLE_HTML_ESCAPING).toString()));
         }
         additionalProperties.put(DISABLE_HTML_ESCAPING, disableHtmlEscaping);
+
+        if (additionalProperties.containsKey(ADDITIONAL_MODEL_TYPE_ANNOTATIONS)) {
+            String additionalAnnotationsList = additionalProperties.get(ADDITIONAL_MODEL_TYPE_ANNOTATIONS).toString();
+            this.setAdditionalModelTypeAnnotations(Arrays.asList(additionalAnnotationsList.split(";")));
+        }
 
         if (additionalProperties.containsKey(CodegenConstants.INVOKER_PACKAGE)) {
             this.setInvokerPackage((String) additionalProperties.get(CodegenConstants.INVOKER_PACKAGE));
@@ -444,12 +472,10 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
         // used later in recursive import in postProcessingModels
         importMapping.put("com.fasterxml.jackson.annotation.JsonProperty", "com.fasterxml.jackson.annotation.JsonCreator");
 
-        if (additionalProperties.containsKey(JAVA8_MODE)) {
-            setJava8Mode(Boolean.parseBoolean(additionalProperties.get(JAVA8_MODE).toString()));
-            if ( java8Mode ) {
-                additionalProperties.put("java8", true);
-            }
-        }
+        setJava8Mode(Boolean.parseBoolean(String.valueOf(additionalProperties.get(JAVA8_MODE))));
+        additionalProperties.put(JAVA8_MODE, java8Mode);
+        setJava11Mode(Boolean.parseBoolean(String.valueOf(additionalProperties.get(JAVA11_MODE))));
+        additionalProperties.put(JAVA11_MODE, java11Mode);
 
         if (additionalProperties.containsKey(SUPPORT_ASYNC)) {
             setSupportAsync(Boolean.parseBoolean(additionalProperties.get(SUPPORT_ASYNC).toString()));
@@ -467,6 +493,8 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
 
         if (additionalProperties.containsKey(DATE_LIBRARY)) {
             setDateLibrary(additionalProperties.get("dateLibrary").toString());
+        } else if (java8Mode) {
+            setDateLibrary("java8");
         }
 
         if ("threetenbp".equals(dateLibrary)) {
@@ -504,9 +532,26 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
             additionalProperties.put("legacyDates", true);
         }
 
+        if (additionalProperties.containsKey(JAKARTA)) {
+            setJakarta(Boolean.parseBoolean(String.valueOf(additionalProperties.get(JAKARTA))));
+            additionalProperties.put(JAKARTA, jakarta);
+        }
+
         if (this.skipAliasGeneration == null) {
             this.skipAliasGeneration = Boolean.TRUE;
         }
+    }
+    
+    @Override
+    public Map<String, Object> postProcessAllModels(Map<String, Object> objs) {
+        objs = super.postProcessAllModels(objs);
+        if (!additionalModelTypeAnnotations.isEmpty()) {
+            for (String modelName : objs.keySet()) {
+                Map<String, Object> models = (Map<String, Object>) objs.get(modelName);
+                models.put(ADDITIONAL_MODEL_TYPE_ANNOTATIONS, additionalModelTypeAnnotations);
+            }
+        }
+        return objs;
     }
 
     private void sanitizeConfig() {
@@ -1443,6 +1488,10 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
         this.java8Mode = enabled;
     }
 
+    public void setJava11Mode(boolean java11Mode) {
+        this.java11Mode = java11Mode;
+    }
+
     public void setDisableHtmlEscaping(boolean disabled) {
         this.disableHtmlEscaping = disabled;
     }
@@ -1450,11 +1499,19 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
     public void setSupportAsync(boolean enabled) {
         this.supportAsync = enabled;
     }
+    
+    public void setAdditionalModelTypeAnnotations(final List<String> additionalModelTypeAnnotations) {
+        this.additionalModelTypeAnnotations = additionalModelTypeAnnotations;
+    }
 
     @Override
     public String escapeQuotationMark(String input) {
         // remove " to avoid code injection
         return input.replace("\"", "");
+    }
+
+    public void setJakarta(boolean jakarta) {
+        this.jakarta = jakarta;
     }
 
     @Override
@@ -1522,9 +1579,4 @@ public abstract class AbstractJavaCodegen extends DefaultCodegen implements Code
         }
         return tag;
     }
-
-    public boolean defaultIgnoreImportMappingOption() {
-        return true;
-    }
-
 }
